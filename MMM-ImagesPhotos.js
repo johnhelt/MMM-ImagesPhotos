@@ -134,12 +134,13 @@ Module.register("MMM-ImagesPhotos",{
 			img.style.maxWidth = this.config.maxWidth;
 			img.style.maxHeight = this.config.maxHeight;
 			img.style.opacity = self.config.opacity;
+                        img.style.position = "sticky";
 			wrapper.appendChild(img);
 		}
 		return wrapper;
 	},
 
-	getScripts: function() {
+	getStyles: function() {
 		return ["MMM-ImagesPhotos.css"]
 	},
 

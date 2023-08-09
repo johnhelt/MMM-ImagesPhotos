@@ -55,8 +55,10 @@ module.exports = NodeHelper.create({
 		res.send(imagesPhotos);
 	},
 
+
 	// return array with only images
 	getImages: function(files) {
+                console.log(`calling getImages on ${files}`);
 		var images = [];
 		var enabledTypes = ["image/jpeg", "image/png", "image/gif"];
 		for (idx in files) {
@@ -69,12 +71,21 @@ module.exports = NodeHelper.create({
 		return images;
 	},
 
-	getFiles: function(path) {
-		return fs.readdirSync(path).filter(function (file) {
-			if (! fs.statSync(path + "/" + file).isDirectory() ) {
-				return file;
-			}
-		});
-	},
-
+	getFiles: function(input_directory) {
+		//console.log('helper input directory: ${input_directory}');
+                console.log(`hello world: ${input_directory}`);
+		let files = [];
+		function ThroughDirectory(Directory) {
+                   fs.readdirSync(Directory).forEach(File => {
+                     const Absolute = path.join(Directory, File);
+                     const Relative = path.relative(input_directory, Absolute);
+                     console.log(`file: ${Relative}`);
+                     if (fs.statSync(Absolute).isDirectory()) return ThroughDirectory(Absolute);
+                     else return files.push(Relative);
+                  });
+                }
+                ThroughDirectory(input_directory);
+                console.log(`done iterating over input directory. Found ${files}`);
+		return files;
+        },
 });

@@ -13,6 +13,7 @@
     "grunt-stylelint": "latest",
     "grunt-yamllint": "latest",
     "stylelint-config-standard": "latest",
-    "time-grunt": "latest"
+    "time-grunt": "latest",
+    "requests": "latest"
   }
 }
