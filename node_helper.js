@@ -14,48 +14,101 @@ var fs = require("fs");
 var mime = require("mime-types");
 
 
-module.exports = NodeHelper.create({
+module.exports = NodeHelper.create({		
+	
 	// Override start method.
 	start: function() {
-		var self = this;
-		console.log("Starting node helper for: " + this.name);
+		var self = this;				
+		console.log("Starting node helper for: " + this.name);		
 		this.setConfig();
-		this.extraRoutes();
+		this.photos = this.getImages(this.getFiles(this.path_images));
+		this.test = "";
+		this.initial_index = this.randomIndex(this.photos);
+		this.extraRoutes();		
+		
 
 	},
 
 	setConfig: function() {
-		this.config = {};
+		this.config = {};		
 		this.path_images = path.resolve(global.root_path + "/modules/MMM-ImagesPhotos/uploads");
+		this.image = {};
+		this.current_album = "";		
+		this.configured = false;
+	},
+
+	publishImageAndFolder: function(index, photos) {
+		var self = this;
+
+		console.debug(`input photos: ${photos}`)
+				
+		var photo = photos[index];
+		var album_ = "super album";
+		
+
+		return {url: "/MMM-ImagesPhotos/photo/" + photo, album: album_}
+
 	},
 
 	// Override socketNotificationReceived method.
 	socketNotificationReceived: function(notification, payload) {
+		var self = this;
+		console.log(`received notifiction ${notification} with payload ${payload}`);	
+		if (notification == "STARTUP") {
+			
+		}
 
 	},
+
+    randomIndex: function(photos) {
+		var self = this;
+
+		if (photos.length === 1) {
+			return 0;
+		}
+
+		var generate = function() {
+			return Math.floor(Math.random() * photos.length);
+		};
+
+		var photoIndex = generate();			
+
+		return photoIndex;
+	},
+
+	
+	
 
 	// create routes for module manager.
 	// recive request and send response
 	extraRoutes: function() {
 		var self = this;
-
-		this.expressApp.get("/MMM-ImagesPhotos/photos", function(req, res) {
-			self.getPhotosImages(req, res);
+		
+		this.expressApp.get('/MMM-ImagesPhotos/update', function(req, res) {
+			console.log("request for update via GET");
+			index = self.randomIndex(self.photos);
+			var image = self.publishImageAndFolder(index, self.photos);
+			this.image = image;
+			self.sendSocketNotification("PUBLISHED", image);
+			console.log(`published ${image.url}`)
+			res.send(image);
 		});
 
+		this.expressApp.get('/MMM-ImagesPhotos/initialize', function(req, res) {
+			console.log("initialization request via GET");
+			var image = self.publishImageAndFolder(self.initial_index, self.photos);
+			this.image = image;
+			console.log(`published initial ${image.url}`)
+			//res.send({url: "", album: ""});
+			res.send(image);
+
+
+		});
+		
 		this.expressApp.use("/MMM-ImagesPhotos/photo", express.static(self.path_images));
 	},
 
-	// return photos-images by response in JSON format.
-	getPhotosImages: function(req, res) {
-		directoryImages = this.path_images;
-		var imagesPhotos = this.getImages(this.getFiles(directoryImages)).map(function (img) {
-			return {url: "/MMM-ImagesPhotos/photo/" + img};
-		})
-		res.send(imagesPhotos);
-	},
-
-
+	
 	// return array with only images
 	getImages: function(files) {
                 console.log(`calling getImages on ${files}`);

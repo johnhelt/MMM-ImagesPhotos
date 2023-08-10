@@ -15,119 +15,93 @@ Module.register("MMM-ImagesPhotos",{
 		getInterval: 60000,
 		maxWidth: "100%",
 		maxHeight: "100%",
-		retryDelay: 2500
+		retryDelay: 2500,
+		show: "photo",		
 	},
 
 	requiresVersion: "2.1.0", // Required version of MagicMirror
 
 	start: function() {
 		var self = this;
-		this.photos = [];
+		this.image = {};
+		this.current = {url: "", album: ""};
 		this.loaded = false;
 		this.lastPhotoIndex = -1;
 
-		// Schedule update timer.
-		this.getPhotos();
-		setInterval(function() {
-			self.updateDom(self.config.animationSpeed);
-		}, this.config.updateInterval);
+		// Should start photo updater only if configured
 
+		
+		this.sendSocketNotification("STARTUP", this.config);		
+
+		Log.info("sent STARTUP message to node_helper");
+
+		this.callNodeHelper("/MMM-ImagesPhotos/initialize", true);
+
+		if (this.config.show == "photo") {						
+			setInterval(function() {
+				Log.info("ask for update")
+				self.callNodeHelper("/MMM-ImagesPhotos/update", false);
+			}, this.config.updateInterval);
+
+		}		
+		
 	},
 
-	/*
-	 * getPhotos
-	 * Requests new data from api url helper
-	 *
-	 */
-	getPhotos: function() {
-		var urlApHelper = "/MMM-ImagesPhotos/photos";
+
+
+	callNodeHelper: function(urlAppHelper, init) {
+
+		// var urlAppHelper = "/MMM-ImagesPhotos/update";
 		var self = this;
-		var retry = true;
 
 		var photosRequest = new XMLHttpRequest();
-		photosRequest.open("GET", urlApHelper, true);
+		photosRequest.open("GET", urlAppHelper, true);
 
 		photosRequest.onreadystatechange = function() {
 			if (this.readyState === 4) {
 				if (this.status === 200) {
-					self.processPhotos(JSON.parse(this.response));
-				} else if (this.status === 401) {
-					self.updateDom(self.config.animationSpeed);
+					
+					if (init) {
+						self.image = JSON.parse(this.response);	
+						self.updateDom(self.config.animationSpeed);		
+					}
+					
+				} else if (this.status === 401) {					
 					Log.error(self.name, this.status);
-					retry = false;
 				} else {
 					Log.error(self.name, "Could not load photos.");
-				}
-
-				if (retry) {
-					self.scheduleUpdate((self.loaded) ? -1 : self.config.retryDelay);
 				}
 			}
 		};
 		photosRequest.send();
+
 	},
 
+	// Listen to server notifications on websocket
 
-	/* scheduleUpdate()
-	 * Schedule next update.
-	 *
-	 * argument delay number - Milliseconds before next update.
-	 *  If empty, this.config.updateInterval is used.
-	 */
-	scheduleUpdate: function(delay) {
-		var nextLoad = this.config.getInterval;
-		if (typeof delay !== "undefined" && delay >= 0) {
-			nextLoad = delay;
-		}
-		nextLoad = nextLoad ;
+	socketNotificationReceived: function(notification, payload) {
 		var self = this;
-		setTimeout(function() {
-			self.getPhotos();
-		}, nextLoad);
-	},
-
-
-	/* randomIndex(photos)
-	 * Generate a random index for a list of photos.
-	 *
-	 * argument photos Array<String> - Array with photos.
-	 *
-	 * return Number - Random index.
-	 */
-	randomIndex: function(photos) {
-		if (photos.length === 1) {
-			return 0;
+		Log.info(this.config.show + "-" + this.name + " received a socket notification: " + notification + " - Payload: " + payload);
+		if (notification == "PUBLISHED") {
+			self.image = payload;
+			self.updateDom(self.config.animationSpeed);			
 		}
-
-		var generate = function() {
-			return Math.floor(Math.random() * photos.length);
-		};
-
-		var photoIndex = generate();
-		this.lastPhotoIndex = photoIndex;
-
-		return photoIndex;
+		
 	},
-
-	/* complimentArray()
-	 * Retrieve a random photos.
-	 *
-	 * return photo Object - A photo.
-	 */
-	randomPhoto: function() {
-		var photos = this.photos;
-		var index = this.randomIndex(photos);
-
-		return photos[index];
-	},
-
+	
 
 	getDom: function() {
 		var self = this;
 		var wrapper = document.createElement("div");
-		var photoImage = this.randomPhoto();
 
-		if (photoImage) {
+		var photoImage = this.image;
+		// var current = this.current;
+		// const entries = Object.entries(current);
+		// Log.info(`entries from socket ${entries}`);
+
+		Log.info(`${this.config.show}: image url ${photoImage.url} and album name: ${photoImage.album}`)
+
+		if (photoImage && this.config.show == "photo") {
 			var img = document.createElement("img");
 			img.src = photoImage.url;
 			img.id = "mmm-images-photos";
@@ -137,18 +111,18 @@ Module.register("MMM-ImagesPhotos",{
                         img.style.position = "sticky";
 			wrapper.appendChild(img);
 		}
+		else if (photoImage && this.config.show == "album") {
+			var textdiv = document.createElement("div")
+			textdiv.classList.add("album")
+			textdiv.innerHTML = photoImage.album;			
+			wrapper.appendChild(textdiv);
+
+		}
 		return wrapper;
 	},
 
 	getStyles: function() {
 		return ["MMM-ImagesPhotos.css"]
-	},
-
-	processPhotos: function(data) {
-		var self = this;
-		this.photos = data;
-		if (this.loaded === false) { self.updateDom(self.config.animationSpeed) ; }
-		this.loaded = true;
-	},
+	},	
 
 });
