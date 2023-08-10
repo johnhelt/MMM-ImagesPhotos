@@ -43,7 +43,7 @@ module.exports = NodeHelper.create({
 		console.debug(`input photos: ${photos}`)
 				
 		var photo = photos[index];
-		var album_ = "super album";
+		var album_ = path.dirname(photo);
 		
 
 		return {url: "/MMM-ImagesPhotos/photo/" + photo, album: album_}
