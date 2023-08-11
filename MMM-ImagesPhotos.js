@@ -30,27 +30,24 @@ Module.register("MMM-ImagesPhotos",{
 
 		// Should start photo updater only if configured
 
+		this.sendSocketNotification("INIT");
+
+		if (this.config.show == "photo") {
+			this.sendSocketNotification("SET_CONFIG", this.config);		
+			Log.info("sent SET_CONFIG message to node_helper");
+		};
+
+		this.getImageFromNodeHelper("/MMM-ImagesPhotos/update");
+		Log.info(`got ${this.image.url} from nodehelper at initialization`)
 		
-		this.sendSocketNotification("STARTUP", this.config);		
-
-		Log.info("sent STARTUP message to node_helper");
-
-		this.callNodeHelper("/MMM-ImagesPhotos/initialize", true);
-
-		if (this.config.show == "photo") {						
-			setInterval(function() {
-				Log.info("ask for update")
-				self.callNodeHelper("/MMM-ImagesPhotos/update", false);
-			}, this.config.updateInterval);
-
-		}		
+		
 		
 	},
 
 
+	getImageFromNodeHelper: function(urlAppHelper) {
 
-	callNodeHelper: function(urlAppHelper, init) {
-
+		Log.info("calling node helper get image at initialization");
 		// var urlAppHelper = "/MMM-ImagesPhotos/update";
 		var self = this;
 
@@ -61,10 +58,9 @@ Module.register("MMM-ImagesPhotos",{
 			if (this.readyState === 4) {
 				if (this.status === 200) {
 					
-					if (init) {
-						self.image = JSON.parse(this.response);	
-						self.updateDom(self.config.animationSpeed);		
-					}
+					self.image = JSON.parse(this.response);
+					Log.info(`returned ${self.image.url}`);
+					self.updateDom(self.config.animationSpeed);
 					
 				} else if (this.status === 401) {					
 					Log.error(self.name, this.status);
@@ -74,6 +70,8 @@ Module.register("MMM-ImagesPhotos",{
 			}
 		};
 		photosRequest.send();
+		Log.info(`returned outer scope ${self.image.url}`);
+		return self.image;
 
 	},
 

@@ -22,25 +22,45 @@ module.exports = NodeHelper.create({
 		console.log("Starting node helper for: " + this.name);		
 		this.setConfig();
 		this.photos = this.getImages(this.getFiles(this.path_images));
-		this.test = "";
-		this.initial_index = this.randomIndex(this.photos);
-		this.extraRoutes();		
-		
-
+		index = self.randomIndex(self.photos);
+		this.image = self.publishImageAndFolder(index, self.photos);
+		console.log(`initial image is ${this.image.url}`);
+		this.extraRoutes(this.image);
 	},
 
 	setConfig: function() {
 		this.config = {};		
 		this.path_images = path.resolve(global.root_path + "/modules/MMM-ImagesPhotos/uploads");
-		this.image = {};
 		this.current_album = "";		
 		this.configured = false;
+	},
+
+	onClientConnect: function(t_this) {
+		var self = t_this;
+		console.log("entering onClientConnect")
+
+		setInterval(function() {
+			var self = t_this;
+			index = self.randomIndex(self.photos);
+			var image = self.publishImageAndFolder(index, self.photos);
+			self.sendSocketNotification("PUBLISHED", image);
+
+		}, self.config.updateInterval);
+		
+		setInterval(function() {
+			var self = t_this;
+			self.photos = self.getImages(self.getFiles(self.path_images));
+
+		}, self.config.getInterval);
+
+		
+
 	},
 
 	publishImageAndFolder: function(index, photos) {
 		var self = this;
 
-		console.debug(`input photos: ${photos}`)
+		console.debug(`input photos: ${photos}`);
 				
 		var photo = photos[index];
 		var album_ = path.dirname(photo);
@@ -54,8 +74,11 @@ module.exports = NodeHelper.create({
 	socketNotificationReceived: function(notification, payload) {
 		var self = this;
 		console.log(`received notifiction ${notification} with payload ${payload}`);	
-		if (notification == "STARTUP") {
-			
+		if (notification == "SET_CONFIG") {
+			if (this.configured) return;
+			self.config = payload;
+			self.onClientConnect(self);
+			this.configured = true;
 		}
 
 	},
@@ -76,35 +99,21 @@ module.exports = NodeHelper.create({
 		return photoIndex;
 	},
 
-	
-	
 
 	// create routes for module manager.
 	// recive request and send response
-	extraRoutes: function() {
+	extraRoutes: function(image) {		
 		var self = this;
+		console.log(`extraRoutes image ${image.url}`)
 		
 		this.expressApp.get('/MMM-ImagesPhotos/update', function(req, res) {
-			console.log("request for update via GET");
-			index = self.randomIndex(self.photos);
-			var image = self.publishImageAndFolder(index, self.photos);
-			this.image = image;
-			self.sendSocketNotification("PUBLISHED", image);
+			var self = this;
+			console.log("request for update via GET");			
+			
 			console.log(`published ${image.url}`)
 			res.send(image);
 		});
 
-		this.expressApp.get('/MMM-ImagesPhotos/initialize', function(req, res) {
-			console.log("initialization request via GET");
-			var image = self.publishImageAndFolder(self.initial_index, self.photos);
-			this.image = image;
-			console.log(`published initial ${image.url}`)
-			//res.send({url: "", album: ""});
-			res.send(image);
-
-
-		});
-		
 		this.expressApp.use("/MMM-ImagesPhotos/photo", express.static(self.path_images));
 	},
 
