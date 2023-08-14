@@ -86,6 +86,13 @@ Module.register("MMM-ImagesPhotos",{
 		}
 		
 	},
+
+	preload_image: function(im_url) {
+		let img = new Image();	  
+		img.src = im_url;
+		Log.info(`preloaded ${im_url}`);
+	},
+	  
 	
 
 	getDom: function() {
@@ -98,6 +105,7 @@ Module.register("MMM-ImagesPhotos",{
 		// Log.info(`entries from socket ${entries}`);
 
 		Log.info(`${this.config.show}: image url ${photoImage.url} and album name: ${photoImage.album}`)
+		this.preload_image(photoImage.next_url);
 
 		if (photoImage && this.config.show == "photo") {
 			var img = document.createElement("img");

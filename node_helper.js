@@ -22,10 +22,11 @@ module.exports = NodeHelper.create({
 		console.log("Starting node helper for: " + this.name);		
 		this.setConfig();
 		this.photos = this.getImages(this.getFiles(this.path_images));
-		index = self.randomIndex(self.photos);
-		this.image = self.publishImageAndFolder(index, self.photos);
+		index = self.randomIndex(this.photos);
+		this.next_index = self.randomIndex(this.photos);
+		this.image = self.publishImageAndFolder(index, this.next_index, this.photos);
 		console.log(`initial image is ${this.image.url}`);
-		this.extraRoutes(this.image);
+		this.extraRoutes(this);
 	},
 
 	setConfig: function() {
@@ -41,8 +42,9 @@ module.exports = NodeHelper.create({
 
 		setInterval(function() {
 			var self = t_this;
-			index = self.randomIndex(self.photos);
-			var image = self.publishImageAndFolder(index, self.photos);
+			index = self.next_index			
+			self.next_index = self.randomIndex(self.photos);			
+			var image = self.publishImageAndFolder(index, self.next_index, self.photos);
 			self.sendSocketNotification("PUBLISHED", image);
 
 		}, self.config.updateInterval);
@@ -52,21 +54,21 @@ module.exports = NodeHelper.create({
 			self.photos = self.getImages(self.getFiles(self.path_images));
 
 		}, self.config.getInterval);
-
-		
-
 	},
 
-	publishImageAndFolder: function(index, photos) {
+	publishImageAndFolder: function(index, next_index, photos) {
 		var self = this;
 
 		console.debug(`input photos: ${photos}`);
 				
 		var photo = photos[index];
 		var album_ = path.dirname(photo);
+		var next_photo = photos[next_index]
+
+		console.log(`publishing photo: ${photo} and next photo: ${next_photo}`);
 		
 
-		return {url: "/MMM-ImagesPhotos/photo/" + photo, album: album_}
+		return {url: "/MMM-ImagesPhotos/photo/" + photo, album: album_, next_url: "/MMM-ImagesPhotos/photo/" + next_photo}
 
 	},
 
@@ -102,12 +104,16 @@ module.exports = NodeHelper.create({
 
 	// create routes for module manager.
 	// recive request and send response
-	extraRoutes: function(image) {		
-		var self = this;
+	extraRoutes: function(t_this) {		
+		var self = t_this;
+
+		image = t_this.image;
+		
 		console.log(`extraRoutes image ${image.url}`)
 		
-		this.expressApp.get('/MMM-ImagesPhotos/update', function(req, res) {
+		this.expressApp.get('/MMM-ImagesPhotos/update', function(req, res) {			
 			var self = this;
+			var image = t_this.image;
 			console.log("request for update via GET");			
 			
 			console.log(`published ${image.url}`)
@@ -134,8 +140,6 @@ module.exports = NodeHelper.create({
 	},
 
 	getFiles: function(input_directory) {
-		//console.log('helper input directory: ${input_directory}');
-                console.log(`hello world: ${input_directory}`);
 		let files = [];
 		function ThroughDirectory(Directory) {
                    fs.readdirSync(Directory).forEach(File => {
