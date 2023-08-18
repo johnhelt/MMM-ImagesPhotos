@@ -40,8 +40,6 @@ Module.register("MMM-ImagesPhotos",{
 		this.getImageFromNodeHelper("/MMM-ImagesPhotos/update");
 		Log.info(`got ${this.image.url} from nodehelper at initialization`)
 		
-		
-		
 	},
 
 
@@ -85,6 +83,26 @@ Module.register("MMM-ImagesPhotos",{
 			self.updateDom(self.config.animationSpeed);			
 		}
 		
+	},
+
+	notificationReceived: function(notification, payload, sender) {
+		Log.info(`notification received ${notification}`);
+		if (notification == "GAMEPAD_BUTTON_PRESSED") {
+			Log.info(`payload ${payload.button}`);
+			switch (payload.button) {
+				case 1:
+					window.close();
+				case 3:
+					Log.info("skip back image");
+					this.sendSocketNotification("SHOW_PREVIOUS_IMAGE", {});
+					break;
+				case 0:
+					Log.info("skip forward image");
+					this.sendSocketNotification("SHOW_NEXT_IMAGE", {})
+					break;
+			}
+		}
+
 	},
 
 	preload_image: function(im_url) {

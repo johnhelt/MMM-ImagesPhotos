@@ -34,6 +34,7 @@ module.exports = NodeHelper.create({
 		this.path_images = path.resolve(global.root_path + "/modules/MMM-ImagesPhotos/uploads");
 		this.current_album = "";		
 		this.configured = false;
+		this.delay = false;
 	},
 
 	onClientConnect: function(t_this) {
@@ -42,6 +43,10 @@ module.exports = NodeHelper.create({
 
 		setInterval(function() {
 			var self = t_this;
+			if (self.delay) {
+				self.delay = false;
+				return;
+			}
 			index = self.next_index			
 			self.next_index = self.randomIndex(self.photos);			
 			var image = self.publishImageAndFolder(index, self.next_index, self.photos);
@@ -75,12 +80,14 @@ module.exports = NodeHelper.create({
 	// Override socketNotificationReceived method.
 	socketNotificationReceived: function(notification, payload) {
 		var self = this;
-		console.log(`received notifiction ${notification} with payload ${payload}`);	
-		if (notification == "SET_CONFIG") {
-			if (this.configured) return;
-			self.config = payload;
-			self.onClientConnect(self);
-			this.configured = true;
+		console.log(`received notifiction ${notification} with payload ${payload}`);
+		switch (notification) {
+			case "SET_CONFIG":
+				if (this.configured) break;
+				self.config = payload;
+				self.onClientConnect(self);
+				this.configured = true;
+				break;
 		}
 
 	},
