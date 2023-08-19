@@ -152,7 +152,7 @@ module.exports = NodeHelper.create({
                    fs.readdirSync(Directory).forEach(File => {
                      const Absolute = path.join(Directory, File);
                      const Relative = path.relative(input_directory, Absolute);
-                     console.log(`file: ${Relative}`);
+                     console.debug(`file: ${Relative}`);
                      if (fs.statSync(Absolute).isDirectory()) return ThroughDirectory(Absolute);
                      else return files.push(Relative);
                   });
