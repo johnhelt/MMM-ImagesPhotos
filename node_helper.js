@@ -20,13 +20,11 @@ module.exports = NodeHelper.create({
 	start: function() {
 		var self = this;				
 		console.log("Starting node helper for: " + this.name);		
-		this.setConfig();
-		this.photos = this.getImages(this.getFiles(this.path_images));
-		index = self.randomIndex(this.photos);
-		this.next_index = self.randomIndex(this.photos);
-		this.image = self.publishImageAndFolder(index, this.next_index, this.photos);
+		this.setConfig();		
+		this.image = {url: null, album: null}
 		console.log(`initial image is ${this.image.url}`);
 		this.extraRoutes(this);
+		this.initImagesPromise = self.getImagesInit()
 	},
 
 	setConfig: function() {
@@ -37,9 +35,26 @@ module.exports = NodeHelper.create({
 		this.delay = false;
 	},
 
+	getImagesInit: async function () {
+		var self = this;
+		self.photos = self.getImages(self.getFiles(self.path_images));
+		index = self.randomIndex(self.photos);
+		self.next_index = self.randomIndex(self.photos);
+		self.image = self.publishImageAndFolder(index, self.next_index, self.photos);
+
+	},
+
 	onClientConnect: function(t_this) {
 		var self = t_this;
 		console.log("entering onClientConnect")
+
+		self.initImagesPromise.then(() => {
+			console.log("images received");
+		})
+		.catch(err => {
+			console.error("error fetching images:", err);
+		})
+		
 
 		setInterval(function() {
 			var self = t_this;
