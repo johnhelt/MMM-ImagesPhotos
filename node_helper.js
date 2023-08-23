@@ -13,6 +13,30 @@ var path = require("path");
 var fs = require("fs");
 var mime = require("mime-types");
 
+const LOG_LEVELS = {
+	DEBUG: 0,
+	INFO: 1,
+	WARN: 2,
+	ERROR: 3,
+  };
+  
+const currentLogLevel = LOG_LEVELS.INFO; // Set your desired log level
+
+const originalConsoleInfo = console.info;
+const originalConsoleDebug = console.debug;
+
+console.info = function (...args) {
+  if (LOG_LEVELS.INFO >= currentLogLevel) {
+    originalConsoleInfo.apply(console, args);
+  }
+};
+
+console.debug = function (...args) {
+  if (LOG_LEVELS.DEBUG >= currentLogLevel) {
+    originalConsoleDebug.apply(console, args);
+  }
+};
+
 
 module.exports = NodeHelper.create({		
 	
@@ -23,7 +47,7 @@ module.exports = NodeHelper.create({
 		this.setConfig();		
 		this.image = {url: null, album: null}
 		console.log(`initial image is ${this.image.url}`);
-		this.extraRoutes(this);
+		this.extraRoutes(this);			
 		this.initImagesPromise = self.getImagesInit()
 	},
 
@@ -32,14 +56,14 @@ module.exports = NodeHelper.create({
 		this.path_images = path.resolve(global.root_path + "/modules/MMM-ImagesPhotos/uploads");
 		this.current_album = "";		
 		this.configured = false;
-		this.delay = false;
 	},
 
 	getImagesInit: async function () {
 		var self = this;
-		self.photos = self.getImages(self.getFiles(self.path_images));
-		index = self.randomIndex(self.photos);
-		self.next_index = self.randomIndex(self.photos);
+		self.photos = self.getImages(self.getFilesAndDates(self.path_images, []));
+		index = self.weightedRandomIndex(self.photos, -1);
+		self.photos[index].lastSelectionTime = Date.now();
+		self.next_index = self.weightedRandomIndex(self.photos, -1);
 		self.image = self.publishImageAndFolder(index, self.next_index, self.photos);
 
 	},
@@ -58,12 +82,12 @@ module.exports = NodeHelper.create({
 
 		setInterval(function() {
 			var self = t_this;
-			if (self.delay) {
-				self.delay = false;
-				return;
-			}
-			index = self.next_index			
-			self.next_index = self.randomIndex(self.photos);			
+			console.info("calling publish interval function")
+			index = self.next_index;
+			next_index = self.weightedRandomIndex(self.photos, self.config.updateInterval / 1000);
+			currentTimestamp = Date.now();
+			self.photos[next_index].lastSelectionTime = currentTimestamp;
+			self.next_index = next_index;
 			var image = self.publishImageAndFolder(index, self.next_index, self.photos);
 			self.sendSocketNotification("PUBLISHED", image);
 
@@ -71,7 +95,8 @@ module.exports = NodeHelper.create({
 		
 		setInterval(function() {
 			var self = t_this;
-			self.photos = self.getImages(self.getFiles(self.path_images));
+			console.info("updating images")
+			self.photos = self.getImages(self.getFilesAndDates(self.path_images, self.photos));
 
 		}, self.config.getInterval);
 	},
@@ -79,13 +104,25 @@ module.exports = NodeHelper.create({
 	publishImageAndFolder: function(index, next_index, photos) {
 		var self = this;
 
-		console.debug(`input photos: ${photos}`);
-				
-		var photo = photos[index];
-		var album_ = path.dirname(photo);
-		var next_photo = photos[next_index]
+		
 
-		console.log(`publishing photo: ${photo} and next photo: ${next_photo}`);
+		console.debug("publishing image")
+		
+		for (const obj of photos) {		
+			console.debug("Photos:");	
+			for (const key in obj) {
+			  if (obj.hasOwnProperty(key)) {
+				console.debug(`  Key: ${key}, Value: ${obj[key]}`);
+			  }
+			}
+		}
+
+		var photo = photos[index].filePath;
+		var album_ = path.dirname(photo);
+		var next_photo = photos[next_index].filePath;
+		
+
+		console.info(`publishing photo: ${photo} and next photo: ${next_photo}`);
 		
 
 		return {url: "/MMM-ImagesPhotos/photo/" + photo, album: album_, next_url: "/MMM-ImagesPhotos/photo/" + next_photo}
@@ -103,6 +140,50 @@ module.exports = NodeHelper.create({
 				self.onClientConnect(self);
 				this.configured = true;
 				break;
+		}
+
+	},
+
+	weightedRandomIndex: function(photos, updateInterval) {
+		var self = this;
+		if (photos.length === 1) {
+			return 0;
+		}
+
+		console.debug("update interval", updateInterval);
+
+		const currentTimestamp = Date.now();
+		const maxTimestamp = Math.max(...photos.map(photo => photo.timestamp));
+		const weights = photos.map(photo => {
+			const timeSinceLastSelection = (currentTimestamp - photo.lastSelectionTime) / 1000;
+			console.debug(`time since photo ${photo.filePath} last selected ${timeSinceLastSelection}`);
+			return (timeSinceLastSelection >= updateInterval) ? (1 + (maxTimestamp - photo.timestamp) / (currentTimestamp - photo.timestamp)) : 0;
+		});
+
+		console.debug("weights: ", weights);
+
+		const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+
+		let selectedPhotoIndex = -1;
+		const randomValue = Math.random() * totalWeight;
+		let cumulativeWeight = 0;
+		for (let i = 0; i < photos.length; i++) {
+			cumulativeWeight += weights[i];
+			if (randomValue <= cumulativeWeight) {
+				selectedPhotoIndex = i;
+				break;
+			}
+		}
+
+		// If a file was selected, log its name
+		if (selectedPhotoIndex !== -1) {			
+			console.debug("Selected index:", selectedPhotoIndex);
+			console.debug("Selected photo:", photos[selectedPhotoIndex].filePath);			
+			
+			return selectedPhotoIndex;
+		} else {
+			console.debug("No photo selected.");
+			return 0;
 		}
 
 	},
@@ -131,14 +212,14 @@ module.exports = NodeHelper.create({
 
 		image = t_this.image;
 		
-		console.log(`extraRoutes image ${image.url}`)
+		console.info(`extraRoutes image ${image.url}`)
 		
 		this.expressApp.get('/MMM-ImagesPhotos/update', function(req, res) {			
 			var self = this;
 			var image = t_this.image;
-			console.log("request for update via GET");			
+			console.info("request for update via GET");			
 			
-			console.log(`published ${image.url}`)
+			console.info(`published ${image.url}`)
 			res.send(image);
 		});
 
@@ -148,32 +229,67 @@ module.exports = NodeHelper.create({
 	
 	// return array with only images
 	getImages: function(files) {
-                console.log(`calling getImages on ${files}`);
+                console.debug(`calling getImages on ${files}`);
 		var images = [];
 		var enabledTypes = ["image/jpeg", "image/png", "image/gif"];
-		for (idx in files) {
-			type = mime.lookup(files[idx]);
+		files.forEach(file => {
+			type = mime.lookup(file.filePath);
 			if (enabledTypes.indexOf(type) >= 0 && type !== false) {
-				images.push(files[idx]);
+				images.push(file);
 			}
-		}
+		});
 
 		return images;
 	},
+	
 
-	getFiles: function(input_directory) {
+	getFilesAndDates: function(input_directory, oldfiles) {
 		let files = [];
+		console.debug("updating files");
 		function ThroughDirectory(Directory) {
                    fs.readdirSync(Directory).forEach(File => {
                      const Absolute = path.join(Directory, File);
                      const Relative = path.relative(input_directory, Absolute);
+					 const stats = fs.statSync(Absolute);
                      console.debug(`file: ${Relative}`);
                      if (fs.statSync(Absolute).isDirectory()) return ThroughDirectory(Absolute);
-                     else return files.push(Relative);
+                     else return files.push({filePath: Relative, timestamp: stats.mtime.getTime(), lastSelectionTime: 0});
                   });
                 }
-                ThroughDirectory(input_directory);
-                console.log(`done iterating over input directory. Found ${files}`);
-		return files;
+
+		ThroughDirectory(input_directory);
+		console.debug(`done iterating over input directory. Found ${files.length}`);
+		
+		const keyProperty = 'filePath';
+
+		// Update using last known list (in case new photos were added). Ensure no duplicates.
+
+		const concatenatedList = Array.from(
+			new Set([...files, ...oldfiles].map(item => item[keyProperty]))
+		).map(filePath => {
+			const itemFromFiles = files.find(item => item[keyProperty] === filePath);
+			const itemFromOldFiles = oldfiles.find(item => item[keyProperty] === filePath);
+
+			if (!itemFromFiles && !itemFromOldFiles) {
+				return null;
+			}
+
+			if (!itemFromFiles) {
+				return itemFromOldFiles;
+			}
+
+			if (!itemFromOldFiles) {
+				return itemFromFiles;
+			}
+			
+			if (itemFromFiles.lastSelectionTime >= itemFromOldFiles.lastSelectionTime) {
+				return itemFromFiles;
+			} else {
+				return itemFromOldFiles
+			}
+
+		});
+
+		return concatenatedList;
         },
 });
