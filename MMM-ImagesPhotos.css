@@ -4,6 +4,7 @@
  *
  * */
 
-.region.middle.center .MMM-ImagesPhotos .module-content: {
-  width: 100px;
+.image-holder {
+  height: 100%;
 }
+

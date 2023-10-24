@@ -116,6 +116,7 @@ Module.register("MMM-ImagesPhotos",{
 	getDom: function() {
 		var self = this;
 		var wrapper = document.createElement("div");
+		wrapper.classList.add("image-holder");
 
 		var photoImage = this.image;
 		// var current = this.current;
