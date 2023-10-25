@@ -116,7 +116,7 @@ Module.register("MMM-ImagesPhotos",{
 	getDom: function() {
 		var self = this;
 		var wrapper = document.createElement("div");
-		wrapper.classList.add("image-holder");
+		
 
 		var photoImage = this.image;
 		// var current = this.current;
@@ -129,12 +129,32 @@ Module.register("MMM-ImagesPhotos",{
 		if (photoImage && this.config.show == "photo") {
 			var img = document.createElement("img");
 			img.src = photoImage.url;
+
+			img.addEventListener('load', function() {
+				// Calculate the aspect ratio.
+				const aspectRatio = img.width / img.height;
+				Log.info(`aspectratio: ${aspectRatio}`)
+			
+				// Set the class of the div based on the aspect ratio.
+				if (aspectRatio > 1) {
+					wrapper.classList.add('image-holder-landscape');
+				} else {
+					wrapper.classList.add('image-holder-portrait');
+				}
+			
+				// Append the image to the div.
+				wrapper.appendChild(img);
+			
+				
+			});
+
+						
 			img.id = "mmm-images-photos";
 			img.style.maxWidth = this.config.maxWidth;
 			img.style.maxHeight = this.config.maxHeight;
 			img.style.opacity = self.config.opacity;
                         img.style.position = "sticky";
-			wrapper.appendChild(img);
+						
 		}
 		else if (photoImage && this.config.show == "album") {
 			var textdiv = document.createElement("div")

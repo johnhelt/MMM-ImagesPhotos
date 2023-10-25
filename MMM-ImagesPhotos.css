@@ -4,7 +4,11 @@
  *
  * */
 
-.image-holder {
+.image-holder-portrait {
   height: 100%;
+}
+
+.image-holder-landscape {
+  width: 100%;
 }
 
