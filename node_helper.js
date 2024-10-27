@@ -59,13 +59,11 @@ module.exports = NodeHelper.create({
 	},
 
 	getImagesInit: async function () {
-		var self = this;
-		self.photos = self.getImages(self.getFilesAndDates(self.path_images, []));
-		index = self.weightedRandomIndex(self.photos, -1);
-		self.photos[index].lastSelectionTime = Date.now();
-		self.next_index = self.weightedRandomIndex(self.photos, -1);
-		self.image = self.publishImageAndFolder(index, self.next_index, self.photos);
-
+		this.photos = this.getImages(this.getFilesAndDates(this.path_images, []));		
+		const index = this.weightedRandomIndex(this.photos);
+		this.photos[index].lastSelectionTime = Date.now();
+		this.next_index = this.weightedRandomIndex(this.photos);
+		this.image = this.publishImageAndFolder(index, this.next_index, this.photos);
 	},
 
 	onClientConnect: function(t_this) {
@@ -103,8 +101,6 @@ module.exports = NodeHelper.create({
 
 	publishImageAndFolder: function(index, next_index, photos) {
 		var self = this;
-
-		
 
 		console.debug("publishing image")
 		
@@ -144,48 +140,40 @@ module.exports = NodeHelper.create({
 
 	},
 
-	weightedRandomIndex: function(photos, updateInterval) {
-		var self = this;
-		if (photos.length === 1) {
-			return 0;
-		}
-
-		console.debug("update interval", updateInterval);
-
+	calculateWeights: function(photos) {
 		const currentTimestamp = Date.now();
-		const maxTimestamp = Math.max(...photos.map(photo => photo.timestamp));
-		const weights = photos.map(photo => {
-			const timeSinceLastSelection = (currentTimestamp - photo.lastSelectionTime) / 1000;
-			console.debug(`time since photo ${photo.filePath} last selected ${timeSinceLastSelection}`);
-			return (timeSinceLastSelection >= updateInterval) ? (1 + (maxTimestamp - photo.timestamp) / (currentTimestamp - photo.timestamp)) : 0;
+		const halfLife = this.config.halfLife || 7 * 24 * 60 * 60 * 1000; // Default to one week if not specified.
+	
+		photos.forEach(photo => {
+			const age = currentTimestamp - photo.timestamp;
+			photo.weight = Math.exp(-age / halfLife); // Store weight in the photo object
 		});
+	
+		console.debug("Calculated weights for photos:", photos.map(photo => ({ filePath: photo.filePath, weight: photo.weight })));
+	},
 
-		console.debug("weights: ", weights);
-
-		const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
-
-		let selectedPhotoIndex = -1;
+	weightedRandomIndex: function(photos) {
+		if (photos.length === 1) {
+			return 0; // Only one photo, so no need for weighting.
+		}
+	
+		// Sum the precomputed weights
+		const totalWeight = photos.reduce((sum, photo) => sum + photo.weight, 0);
+	
+		// Select a random index based on weighted probabilities
 		const randomValue = Math.random() * totalWeight;
 		let cumulativeWeight = 0;
 		for (let i = 0; i < photos.length; i++) {
-			cumulativeWeight += weights[i];
+			cumulativeWeight += photos[i].weight;
 			if (randomValue <= cumulativeWeight) {
-				selectedPhotoIndex = i;
-				break;
+				console.debug("Selected index:", i);
+				console.debug("Selected photo:", photos[i].filePath);
+				return i;
 			}
 		}
-
-		// If a file was selected, log its name
-		if (selectedPhotoIndex !== -1) {			
-			console.debug("Selected index:", selectedPhotoIndex);
-			console.debug("Selected photo:", photos[selectedPhotoIndex].filePath);			
-			
-			return selectedPhotoIndex;
-		} else {
-			console.debug("No photo selected.");
-			return 0;
-		}
-
+	
+		console.debug("No photo selected due to cumulative weight issue. Returning first photo.");
+		return 0; // Fallback to the first photo if something goes wrong.
 	},
 
     randomIndex: function(photos) {
@@ -229,67 +217,82 @@ module.exports = NodeHelper.create({
 	
 	// return array with only images
 	getImages: function(files) {
-                console.debug(`calling getImages on ${files}`);
-		var images = [];
-		var enabledTypes = ["image/jpeg", "image/png", "image/gif"];
-		files.forEach(file => {
-			type = mime.lookup(file.filePath);
-			if (enabledTypes.indexOf(type) >= 0 && type !== false) {
-				images.push(file);
-			}
+		console.debug(`calling getImages on ${files}`);
+		const enabledTypes = ["image/jpeg", "image/png", "image/gif"];
+		
+		// Filter files for images only
+		const images = files.filter(file => {
+			const type = mime.lookup(file.filePath);
+			return enabledTypes.includes(type);
 		});
-
-		return images;
+	
+		// Check if the photos list has changed by comparing the lengths or file paths
+		const hasUpdated = images.length !== this.photos.length ||
+			images.some((img, index) => img.filePath !== this.photos[index]?.filePath);
+	
+		// Update photos list if there are changes
+		if (hasUpdated) {
+			this.photos = images;
+			this.calculateWeights(this.photos); // Recalculate weights only if there was an actual update
+			console.debug("Images updated, recalculated weights.");
+		} else {
+			console.debug("No update in images, skipping weight recalculation.");
+		}
+	
+		return this.photos;
 	},
 	
 
 	getFilesAndDates: function(input_directory, oldfiles) {
 		let files = [];
-		console.debug("updating files");
-		function ThroughDirectory(Directory) {
-                   fs.readdirSync(Directory).forEach(File => {
-                     const Absolute = path.join(Directory, File);
-                     const Relative = path.relative(input_directory, Absolute);
-					 const stats = fs.statSync(Absolute);
-                     console.debug(`file: ${Relative}`);
-                     if (fs.statSync(Absolute).isDirectory()) return ThroughDirectory(Absolute);
-                     else return files.push({filePath: Relative, timestamp: stats.mtime.getTime(), lastSelectionTime: 0});
-                  });
-                }
-
+		let ignoreList = [];
+	
+		// Check if .ignore file exists and read it if present
+		const ignoreFilePath = path.join(input_directory, ".ignore");
+		if (fs.existsSync(ignoreFilePath)) {
+			const ignoreContent = fs.readFileSync(ignoreFilePath, "utf-8");
+			ignoreList = ignoreContent
+				.split("\n")               // Split lines
+				.map(line => line.trim())   // Remove extra spaces
+				.filter(line => line && !line.startsWith("#"));  // Remove empty lines and comments
+			console.debug("Ignoring directories:", ignoreList);
+		}
+	
+		// Helper function to recursively walk through directories and gather files
+		function ThroughDirectory(directory) {
+			fs.readdirSync(directory).forEach(file => {
+				const absolutePath = path.join(directory, file);
+				const relativePath = path.relative(input_directory, absolutePath);
+				const stats = fs.statSync(absolutePath);
+	
+				// Skip directories listed in the ignore list
+				if (stats.isDirectory()) {
+					if (!ignoreList.includes(relativePath)) {
+						ThroughDirectory(absolutePath); // Recursively check subdirectories
+					}
+				} else {
+					// Add files that are not in ignored directories
+					files.push({ filePath: relativePath, timestamp: stats.mtime.getTime(), lastSelectionTime: 0 });
+					console.debug(`File added: ${relativePath}`);
+				}
+			});
+		}
+	
+		// Run the directory traversal
 		ThroughDirectory(input_directory);
-		console.debug(`done iterating over input directory. Found ${files.length}`);
-		
-		const keyProperty = 'filePath';
-
-		// Update using last known list (in case new photos were added). Ensure no duplicates.
-
+		console.debug(`Done iterating over input directory. Found ${files.length} files.`);
+	
+		// Combine current and previous file lists, avoiding duplicates
+		const keyProperty = "filePath";
 		const concatenatedList = Array.from(
 			new Set([...files, ...oldfiles].map(item => item[keyProperty]))
 		).map(filePath => {
 			const itemFromFiles = files.find(item => item[keyProperty] === filePath);
 			const itemFromOldFiles = oldfiles.find(item => item[keyProperty] === filePath);
-
-			if (!itemFromFiles && !itemFromOldFiles) {
-				return null;
-			}
-
-			if (!itemFromFiles) {
-				return itemFromOldFiles;
-			}
-
-			if (!itemFromOldFiles) {
-				return itemFromFiles;
-			}
 			
-			if (itemFromFiles.lastSelectionTime >= itemFromOldFiles.lastSelectionTime) {
-				return itemFromFiles;
-			} else {
-				return itemFromOldFiles
-			}
-
+			return itemFromFiles || itemFromOldFiles;
 		});
-
+	
 		return concatenatedList;
-        },
+	}
 });
