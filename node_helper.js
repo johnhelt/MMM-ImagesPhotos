@@ -12,6 +12,7 @@ var url = require("url");
 var path = require("path");
 var fs = require("fs");
 var mime = require("mime-types");
+const ExifParser = require("exif-parser");
 
 const LOG_LEVELS = {
 	DEBUG: 0,
@@ -20,7 +21,7 @@ const LOG_LEVELS = {
 	ERROR: 3,
   };
   
-const currentLogLevel = LOG_LEVELS.INFO; // Set your desired log level
+const currentLogLevel = LOG_LEVELS.DEBUG; // Set your desired log level
 
 const originalConsoleInfo = console.info;
 const originalConsoleDebug = console.debug;
@@ -46,6 +47,7 @@ module.exports = NodeHelper.create({
 		console.log("Starting node helper for: " + this.name);		
 		this.setConfig();		
 		this.image = {url: null, album: null}
+		this.photos = [];
 		console.log(`initial image is ${this.image.url}`);
 		this.extraRoutes(this);			
 		this.initImagesPromise = self.getImagesInit()
@@ -140,16 +142,36 @@ module.exports = NodeHelper.create({
 
 	},
 
+	timestampToUTC: function(timestamp) {
+		const date = new Date(timestamp); // Create a Date object from the timestamp
+		return date.toUTCString(); // Convert to UTC string
+	},
+
 	calculateWeights: function(photos) {
 		const currentTimestamp = Date.now();
-		const halfLife = this.config.halfLife || 7 * 24 * 60 * 60 * 1000; // Default to one week if not specified.
+		const halfLife = this.config.halfLife || 2 * 365 * 24 * 3600; // Default half-life (in seconds)
+		const decayFactor = Math.log(2) / halfLife; // Calculate decay factor
 	
-		photos.forEach(photo => {
-			const age = currentTimestamp - photo.timestamp;
-			photo.weight = Math.exp(-age / halfLife); // Store weight in the photo object
+		const maxWeight = 1; // Maximum weight for the most recent photo
+		const minWeight = 0.1; // Minimum weight for the oldest photo
+	
+		const weights = photos.map(photo => {			
+			console.debug(`Photo and timestamp: ${photo.filePath} ${this.timestampToUTC(photo.timestamp)}`);
+			const ageInSeconds = (currentTimestamp - photo.timestamp) / 1000; // Calculate age based on timestamp
+			const weight = Math.max(minWeight, maxWeight * Math.exp(-decayFactor * ageInSeconds)); // Apply decay
+			return weight;
 		});
 	
-		console.debug("Calculated weights for photos:", photos.map(photo => ({ filePath: photo.filePath, weight: photo.weight })));
+		const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+		// Normalize weights
+		const normalizedWeights = weights.map(weight => weight / totalWeight);
+	
+		// Store the calculated weights for later use
+		photos.forEach((photo, index) => {
+			photo.weight = normalizedWeights[index]; // Store the normalized weight in the photo object
+		});
+	
+		console.debug("Calculated Weights:", normalizedWeights);
 	},
 
 	weightedRandomIndex: function(photos) {
@@ -157,17 +179,16 @@ module.exports = NodeHelper.create({
 			return 0; // Only one photo, so no need for weighting.
 		}
 	
-		// Sum the precomputed weights
-		const totalWeight = photos.reduce((sum, photo) => sum + photo.weight, 0);
-	
 		// Select a random index based on weighted probabilities
-		const randomValue = Math.random() * totalWeight;
+		const randomValue = Math.random();
 		let cumulativeWeight = 0;
 		for (let i = 0; i < photos.length; i++) {
 			cumulativeWeight += photos[i].weight;
 			if (randomValue <= cumulativeWeight) {
 				console.debug("Selected index:", i);
 				console.debug("Selected photo:", photos[i].filePath);
+				console.debug("cumulativeWeight", cumulativeWeight);
+				console.debug("randomValue", randomValue);
 				return i;
 			}
 		}
@@ -225,6 +246,7 @@ module.exports = NodeHelper.create({
 			const type = mime.lookup(file.filePath);
 			return enabledTypes.includes(type);
 		});
+
 	
 		// Check if the photos list has changed by comparing the lengths or file paths
 		const hasUpdated = images.length !== this.photos.length ||
@@ -271,9 +293,30 @@ module.exports = NodeHelper.create({
 						ThroughDirectory(absolutePath); // Recursively check subdirectories
 					}
 				} else {
-					// Add files that are not in ignored directories
-					files.push({ filePath: relativePath, timestamp: stats.mtime.getTime(), lastSelectionTime: 0 });
-					console.debug(`File added: ${relativePath}`);
+					// Check for EXIF "Date Taken" metadata
+					let timestamp;
+					try {
+						const buffer = fs.readFileSync(absolutePath);
+						const parser = ExifParser.create(buffer);
+						const result = parser.parse();
+						const dateTaken = result.tags.DateTimeOriginal;
+						
+						if (dateTaken) {
+							// Use EXIF "Date Taken" if available
+							timestamp = new Date(dateTaken * 1000).getTime(); // Convert to milliseconds
+							console.debug(`EXIF Date Taken for ${relativePath}:`, new Date(timestamp).toUTCString());
+						} else {
+							// Use modified time if EXIF data is not available
+							timestamp = stats.mtime.getTime();
+							console.debug(`No EXIF Date Taken for ${relativePath}. Using modified time:`, new Date(timestamp).toUTCString());
+						}
+					} catch (error) {
+						console.error("Error reading EXIF data for", relativePath, ":", error);
+						timestamp = stats.mtime.getTime(); // Fall back to modified time on error
+					}
+	
+					files.push({ filePath: relativePath, timestamp: timestamp, lastSelectionTime: 0 });
+					console.debug(`File added: ${relativePath} with timestamp: ${new Date(timestamp).toUTCString()}`);
 				}
 			});
 		}
