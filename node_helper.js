@@ -43,14 +43,23 @@ module.exports = NodeHelper.create({
 	
 	// Override start method.
 	start: function() {
-		var self = this;				
-		console.log("Starting node helper for: " + this.name);		
-		this.setConfig();		
-		this.image = {url: null, album: null}
-		this.photos = [];
-		console.log(`initial image is ${this.image.url}`);
-		this.extraRoutes(this);			
-		this.initImagesPromise = self.getImagesInit()
+		var self = this;                
+		console.log("Starting node helper for: " + this.name);
+		
+		// Initialize the configuration and database
+		this.setConfig();        
+		this.initDatabase(); // Initialize the SQLite database for EXIF caching
+		
+		this.image = {url: null, album: null}; // Initialize the image object
+		this.photos = []; // Initialize the photos array
+	
+		console.log(`Initial image is ${this.image.url}`);
+		
+		// Setup additional routes for the module
+		this.extraRoutes(this);
+	
+		// Initialize image fetching
+		this.initImagesPromise = self.getImagesInit();
 	},
 
 	setConfig: function() {
@@ -61,11 +70,68 @@ module.exports = NodeHelper.create({
 	},
 
 	getImagesInit: async function () {
-		this.photos = this.getImages(this.getFilesAndDates(this.path_images, []));		
+		const files = await this.getFilesAndDates(this.path_images, []);
+		this.photos = this.getImages(files);		
 		const index = this.weightedRandomIndex(this.photos);
 		this.photos[index].lastSelectionTime = Date.now();
 		this.next_index = this.weightedRandomIndex(this.photos);
 		this.image = this.publishImageAndFolder(index, this.next_index, this.photos);
+	},
+
+	// Initialize the SQLite database
+	initDatabase: function() {
+		const sqlite3 = require('sqlite3').verbose();  // Ensure you require sqlite3 module
+		this.db = new sqlite3.Database(path.join(global.root_path, '/databases/exif_cache.db'), (err) => {
+			if (err) {
+				console.error('Failed to open SQLite database:', err.message);
+			} else {
+				console.log('SQLite database connected');
+			}
+		});
+
+		// Create a table to store EXIF data if it doesn't exist
+		this.db.run(`
+			CREATE TABLE IF NOT EXISTS exif_data (
+				filePath TEXT PRIMARY KEY,
+				exifData TEXT
+			)`);
+	},
+
+
+	// Retrieve EXIF data from the database
+	getExifDataFromDB: function(filePath, callback) {
+		this.db.get(`SELECT exifData FROM exif_data WHERE filePath = ?`, [filePath], (err, row) => {
+			if (err) {
+				console.error('Error retrieving EXIF data from DB:', err.message);
+				callback(null); // Callback with null if error occurs
+				return;
+			}
+			
+			if (row) {
+				console.debug(`EXIF data found for ${filePath}`);
+				callback(JSON.parse(row.exifData)); // Parse the stored EXIF data
+			} else {
+				console.debug(`No EXIF data found for ${filePath}`);
+				callback(null); // Callback with null if no data found
+			}
+		});
+	},
+
+	// Save EXIF data to the database
+	saveExifDataToDB: function(filePath, exifData, callback) {
+		// Check if EXIF data already exists for this file
+		this.db.run(`
+			INSERT OR REPLACE INTO exif_data (filePath, exifData) 
+			VALUES (?, ?)`, [filePath, JSON.stringify(exifData)], (err) => {
+			if (err) {
+				console.error('Error saving EXIF data to DB:', err.message);
+				callback(false); // Callback with false on error
+				return;
+			}
+
+			console.debug(`EXIF data saved for ${filePath}`);
+			callback(true); // Callback with true if saving was successful
+		});
 	},
 
 	onClientConnect: function(t_this) {
@@ -95,9 +161,18 @@ module.exports = NodeHelper.create({
 		
 		setInterval(function() {
 			var self = t_this;
-			console.info("updating images")
-			self.photos = self.getImages(self.getFilesAndDates(self.path_images, self.photos));
-
+			console.info("updating images");
+		
+			// Async function wrapper to handle 'await' correctly
+			(async function() {
+				try {
+					const files = await self.getFilesAndDates(self.path_images, self.photos);  // Asynchronous call
+					self.photos = self.getImages(files);  // Process the files as usual
+				} catch (error) {
+					console.error("Error updating images:", error);
+				}
+			})();
+		
 		}, self.config.getInterval);
 	},
 
@@ -263,79 +338,81 @@ module.exports = NodeHelper.create({
 	
 		return this.photos;
 	},
-	
 
-	getFilesAndDates: function(input_directory, oldfiles) {
+	ThroughDirectory: async function(files, directory, ignoreList) {
+		const filePromises = fs.readdirSync(directory).map(async (file) => {
+			const absolutePath = path.join(directory, file);
+			const relativePath = path.relative(directory, absolutePath);
+			const stats = fs.statSync(absolutePath);
+	
+			if (stats.isDirectory()) {
+				if (!ignoreList.includes(relativePath)) {
+					await this.ThroughDirectory(files, absolutePath, ignoreList);  // Recursive call for directories
+				}
+			} else {
+				// Use the DB to get EXIF data if cached
+				await new Promise((resolve) => {
+					this.getExifDataFromDB(relativePath, (cachedExifData) => {
+						let timestamp;
+						if (cachedExifData) {
+							timestamp = cachedExifData.timestamp;  // Use cached EXIF data
+						} else {
+							try {
+								const buffer = fs.readFileSync(absolutePath);
+								const parser = ExifParser.create(buffer);
+								const result = parser.parse();
+								const dateTaken = result.tags.DateTimeOriginal;
+	
+								if (dateTaken) {
+									timestamp = new Date(dateTaken * 1000).getTime();  // Use EXIF data
+									console.debug(`EXIF Date Taken for ${relativePath}:`, new Date(timestamp).toUTCString());
+								} else {
+									timestamp = stats.mtime.getTime();  // Fall back to modified time
+									console.debug(`No EXIF Date Taken for ${relativePath}. Using modified time:`, new Date(timestamp).toUTCString());
+								}
+	
+								// Save EXIF data for future use
+								this.saveExifDataToDB(relativePath, { timestamp: timestamp }, (success) => {
+									if (success) {
+										console.debug("EXIF data saved for " + relativePath);
+									}
+									resolve();  // Resolve when saving is done
+								});
+							} catch (error) {
+								console.error("Error reading EXIF data for", relativePath, ":", error);
+								timestamp = stats.mtime.getTime();  // Fallback to file's modified time
+								resolve();  // Resolve in case of error
+							}
+						}
+	
+						// Push file information to the array after processing
+						files.push({ filePath: relativePath, timestamp: timestamp, lastSelectionTime: 0 });
+						console.debug(`File added: ${relativePath} with timestamp: ${new Date(timestamp).toUTCString()}`);
+					});
+				});
+			}
+		});
+	
+		// Wait for all the file processing promises to complete
+		await Promise.all(filePromises);
+	},
+	
+	getFilesAndDates: async function(input_directory, oldfiles) {
 		let files = [];
 		let ignoreList = [];
 	
-		// Check if .ignore file exists and read it if present
 		const ignoreFilePath = path.join(input_directory, ".ignore");
 		if (fs.existsSync(ignoreFilePath)) {
 			const ignoreContent = fs.readFileSync(ignoreFilePath, "utf-8");
 			ignoreList = ignoreContent
-				.split("\n")               // Split lines
-				.map(line => line.trim())   // Remove extra spaces
-				.filter(line => line && !line.startsWith("#"));  // Remove empty lines and comments
+				.split("\n")               
+				.map(line => line.trim())   
+				.filter(line => line && !line.startsWith("#"));  
 			console.debug("Ignoring directories:", ignoreList);
 		}
 	
-		// Helper function to recursively walk through directories and gather files
-		function ThroughDirectory(directory) {
-			fs.readdirSync(directory).forEach(file => {
-				const absolutePath = path.join(directory, file);
-				const relativePath = path.relative(input_directory, absolutePath);
-				const stats = fs.statSync(absolutePath);
-	
-				// Skip directories listed in the ignore list
-				if (stats.isDirectory()) {
-					if (!ignoreList.includes(relativePath)) {
-						ThroughDirectory(absolutePath); // Recursively check subdirectories
-					}
-				} else {
-					// Check for EXIF "Date Taken" metadata
-					let timestamp;
-					try {
-						const buffer = fs.readFileSync(absolutePath);
-						const parser = ExifParser.create(buffer);
-						const result = parser.parse();
-						const dateTaken = result.tags.DateTimeOriginal;
-						
-						if (dateTaken) {
-							// Use EXIF "Date Taken" if available
-							timestamp = new Date(dateTaken * 1000).getTime(); // Convert to milliseconds
-							console.debug(`EXIF Date Taken for ${relativePath}:`, new Date(timestamp).toUTCString());
-						} else {
-							// Use modified time if EXIF data is not available
-							timestamp = stats.mtime.getTime();
-							console.debug(`No EXIF Date Taken for ${relativePath}. Using modified time:`, new Date(timestamp).toUTCString());
-						}
-					} catch (error) {
-						console.error("Error reading EXIF data for", relativePath, ":", error);
-						timestamp = stats.mtime.getTime(); // Fall back to modified time on error
-					}
-	
-					files.push({ filePath: relativePath, timestamp: timestamp, lastSelectionTime: 0 });
-					console.debug(`File added: ${relativePath} with timestamp: ${new Date(timestamp).toUTCString()}`);
-				}
-			});
-		}
-	
-		// Run the directory traversal
-		ThroughDirectory(input_directory);
+		await this.ThroughDirectory(files, input_directory, ignoreList);  // Await the result from ThroughDirectory
 		console.debug(`Done iterating over input directory. Found ${files.length} files.`);
-	
-		// Combine current and previous file lists, avoiding duplicates
-		const keyProperty = "filePath";
-		const concatenatedList = Array.from(
-			new Set([...files, ...oldfiles].map(item => item[keyProperty]))
-		).map(filePath => {
-			const itemFromFiles = files.find(item => item[keyProperty] === filePath);
-			const itemFromOldFiles = oldfiles.find(item => item[keyProperty] === filePath);
-			
-			return itemFromFiles || itemFromOldFiles;
-		});
-	
-		return concatenatedList;
-	}
+		return files;
+	}	
 });
