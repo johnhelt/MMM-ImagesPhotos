@@ -290,7 +290,7 @@ module.exports = NodeHelper.create({
 
 
 	// create routes for module manager.
-	// recive request and send response
+	// receive request and send response
 	extraRoutes: function(t_this) {		
 		var self = t_this;
 
@@ -339,22 +339,22 @@ module.exports = NodeHelper.create({
 		return this.photos;
 	},
 
-	ThroughDirectory: async function(files, directory, ignoreList) {
+	ThroughDirectory: async function(files, directory, ignoreList, input_directory) {
 		const filePromises = fs.readdirSync(directory).map(async (file) => {
 			const absolutePath = path.join(directory, file);
-			const relativePath = path.relative(directory, absolutePath);
+			const relativePath = path.relative(input_directory, absolutePath);
 			const stats = fs.statSync(absolutePath);
 	
 			if (stats.isDirectory()) {
 				if (!ignoreList.includes(relativePath)) {
-					await this.ThroughDirectory(files, absolutePath, ignoreList);  // Recursive call for directories
+					await this.ThroughDirectory(files, absolutePath, ignoreList, input_directory);  // Recursive call for directories
 				}
 			} else {
 				// Use the DB to get EXIF data if cached
 				await new Promise((resolve) => {
 					this.getExifDataFromDB(relativePath, (cachedExifData) => {
 						let timestamp;
-						if (cachedExifData) {
+						if (cachedExifData) {							
 							timestamp = cachedExifData.timestamp;  // Use cached EXIF data
 						} else {
 							try {
@@ -387,7 +387,7 @@ module.exports = NodeHelper.create({
 	
 						// Push file information to the array after processing
 						files.push({ filePath: relativePath, timestamp: timestamp, lastSelectionTime: 0 });
-						console.debug(`File added: ${relativePath} with timestamp: ${new Date(timestamp).toUTCString()}`);
+						console.debug(`File added (abs): ${absolutePath} - (rel): ${relativePath} with timestamp: ${new Date(timestamp).toUTCString()}`);
 					});
 				});
 			}
@@ -411,7 +411,7 @@ module.exports = NodeHelper.create({
 			console.debug("Ignoring directories:", ignoreList);
 		}
 	
-		await this.ThroughDirectory(files, input_directory, ignoreList);  // Await the result from ThroughDirectory
+		await this.ThroughDirectory(files, input_directory, ignoreList, input_directory);  // Await the result from ThroughDirectory
 		console.debug(`Done iterating over input directory. Found ${files.length} files.`);
 		return files;
 	}	
