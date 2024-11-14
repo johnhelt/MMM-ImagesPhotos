@@ -55,11 +55,19 @@ module.exports = NodeHelper.create({
 	
 		console.log(`Initial image is ${this.image.url}`);
 		
-		// Setup additional routes for the module
-		this.extraRoutes(this);
-	
-		// Initialize image fetching
 		this.initImagesPromise = self.getImagesInit();
+		// Setup additional routes for the module
+
+		this.initImagesPromise.then(() => {
+			// Only setup routes once images are ready
+			console.debug(`initImagesPromise completed. Images are now ${this.photos.length}`);
+			this.extraRoutes(self);
+		}).catch(err => {
+			console.error("Error during image initialization:", err);
+		});
+			
+		// Initialize image fetching
+		
 	},
 
 	setConfig: function() {
@@ -70,12 +78,15 @@ module.exports = NodeHelper.create({
 	},
 
 	getImagesInit: async function () {
+		console.debug("Calling getImagesInit");
 		const files = await this.getFilesAndDates(this.path_images, []);
+		console.debug("getImagesInit: Files returned...");
 		this.photos = this.getImages(files);		
 		const index = this.weightedRandomIndex(this.photos);
 		this.photos[index].lastSelectionTime = Date.now();
 		this.next_index = this.weightedRandomIndex(this.photos);
 		this.image = this.publishImageAndFolder(index, this.next_index, this.photos);
+		console.debug(`Photos at initialization: ${this.photos.length}`);
 	},
 
 	// Initialize the SQLite database
@@ -148,15 +159,21 @@ module.exports = NodeHelper.create({
 
 		setInterval(function() {
 			var self = t_this;
-			console.info("calling publish interval function")
-			index = self.next_index;
-			next_index = self.weightedRandomIndex(self.photos, self.config.updateInterval / 1000);
-			currentTimestamp = Date.now();
+			console.info("calling publish interval function");
+			let index = self.next_index;
+		
+			// Validate that next_index is within bounds
+			let next_index = self.weightedRandomIndex(self.photos, self.config.updateInterval / 1000);
+			if (next_index === null || next_index >= self.photos.length) {
+				console.error("Invalid next_index: ", next_index);
+				return;
+			}
+		
+			const currentTimestamp = Date.now();
 			self.photos[next_index].lastSelectionTime = currentTimestamp;
 			self.next_index = next_index;
-			var image = self.publishImageAndFolder(index, self.next_index, self.photos);
+			const image = self.publishImageAndFolder(index, self.next_index, self.photos);
 			self.sendSocketNotification("PUBLISHED", image);
-
 		}, self.config.updateInterval);
 		
 		setInterval(function() {
@@ -165,9 +182,12 @@ module.exports = NodeHelper.create({
 		
 			// Async function wrapper to handle 'await' correctly
 			(async function() {
+				console.debug(`Calling async image update. Current photos length ${self.photos.length}. Looking for images on: ${self.path_images}`);
 				try {
 					const files = await self.getFilesAndDates(self.path_images, self.photos);  // Asynchronous call
+					console.debug("Files received, now processing photos");
 					self.photos = self.getImages(files);  // Process the files as usual
+					console.debug(`Update completed. Number of images: ${self.photos.length}`);
 				} catch (error) {
 					console.error("Error updating images:", error);
 				}
@@ -225,51 +245,56 @@ module.exports = NodeHelper.create({
 	calculateWeights: function(photos) {
 		const currentTimestamp = Date.now();
 		const halfLife = this.config.halfLife || 2 * 365 * 24 * 3600; // Default half-life (in seconds)
-		const decayFactor = Math.log(2) / halfLife; // Calculate decay factor
+		const decayFactor = Math.log(2) / halfLife;
 	
-		const maxWeight = 1; // Maximum weight for the most recent photo
-		const minWeight = 0.1; // Minimum weight for the oldest photo
+		const maxWeight = 1;  // Maximum weight
+		const minWeight = 0.1;  // Minimum weight for the oldest photo
 	
-		const weights = photos.map(photo => {			
+		// Calculate weights based on decay
+		const weights = photos.map(photo => {
 			console.debug(`Photo and timestamp: ${photo.filePath} ${this.timestampToUTC(photo.timestamp)}`);
-			const ageInSeconds = (currentTimestamp - photo.timestamp) / 1000; // Calculate age based on timestamp
-			const weight = Math.max(minWeight, maxWeight * Math.exp(-decayFactor * ageInSeconds)); // Apply decay
+			const ageInSeconds = (currentTimestamp - photo.timestamp) / 1000;
+			const weight = Math.max(minWeight, maxWeight * Math.exp(-decayFactor * ageInSeconds));
 			return weight;
 		});
 	
+		// Calculate total weight for normalization
 		const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
-		// Normalize weights
-		const normalizedWeights = weights.map(weight => weight / totalWeight);
+		if (totalWeight === 0) {
+			console.error("Total weight is zero, check decay settings.");
+			return;
+		}
 	
-		// Store the calculated weights for later use
+		// Normalize weights and store in photos array
 		photos.forEach((photo, index) => {
-			photo.weight = normalizedWeights[index]; // Store the normalized weight in the photo object
+			photo.weight = weights[index] / totalWeight;
 		});
 	
-		console.debug("Calculated Weights:", normalizedWeights);
+		console.debug("Calculated normalized weights:", photos.map(photo => photo.weight));
 	},
 
 	weightedRandomIndex: function(photos) {
+		if (!photos || photos.length === 0) {
+			console.debug("No photos available, cannot select a random index.");
+			return null;
+		}
 		if (photos.length === 1) {
-			return 0; // Only one photo, so no need for weighting.
+			return 0;
 		}
 	
-		// Select a random index based on weighted probabilities
 		const randomValue = Math.random();
 		let cumulativeWeight = 0;
 		for (let i = 0; i < photos.length; i++) {
 			cumulativeWeight += photos[i].weight;
 			if (randomValue <= cumulativeWeight) {
 				console.debug("Selected index:", i);
-				console.debug("Selected photo:", photos[i].filePath);
-				console.debug("cumulativeWeight", cumulativeWeight);
-				console.debug("randomValue", randomValue);
 				return i;
 			}
 		}
 	
-		console.debug("No photo selected due to cumulative weight issue. Returning first photo.");
-		return 0; // Fallback to the first photo if something goes wrong.
+		// Edge case fallback
+		console.debug("Cumulative weight issue detected. Returning last photo as fallback.");
+		return photos.length - 1;  // Fallback to the last photo if the loop fails
 	},
 
     randomIndex: function(photos) {
@@ -340,6 +365,7 @@ module.exports = NodeHelper.create({
 	},
 
 	ThroughDirectory: async function(files, directory, ignoreList, input_directory) {
+		console.log(`Calling ThroughDirectory on ${directory} and ${input_directory}`);
 		const filePromises = fs.readdirSync(directory).map(async (file) => {
 			const absolutePath = path.join(directory, file);
 			const relativePath = path.relative(input_directory, absolutePath);
@@ -356,6 +382,7 @@ module.exports = NodeHelper.create({
 						let timestamp;
 						if (cachedExifData) {							
 							timestamp = cachedExifData.timestamp;  // Use cached EXIF data
+							resolve();
 						} else {
 							try {
 								const buffer = fs.readFileSync(absolutePath);
@@ -394,10 +421,13 @@ module.exports = NodeHelper.create({
 		});
 	
 		// Wait for all the file processing promises to complete
+		console.debug("Waiting for filePromises");
 		await Promise.all(filePromises);
+		console.debug("Done waiting for filePromises");
 	},
 	
 	getFilesAndDates: async function(input_directory, oldfiles) {
+		console.debug("Calling getFilesAndDates");
 		let files = [];
 		let ignoreList = [];
 	
