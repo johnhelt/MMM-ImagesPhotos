@@ -13,6 +13,7 @@ var path = require("path");
 var fs = require("fs");
 var mime = require("mime-types");
 const ExifParser = require("exif-parser");
+const sqlite3 = require('sqlite3');  // Ensure you require sqlite3 module
 
 const LOG_LEVELS = {
 	DEBUG: 0,
@@ -91,7 +92,7 @@ module.exports = NodeHelper.create({
 
 	// Initialize the SQLite database
 	initDatabase: function() {
-		const sqlite3 = require('sqlite3').verbose();  // Ensure you require sqlite3 module
+		
 		this.db = new sqlite3.Database(path.join(global.root_path, '/databases/exif_cache.db'), (err) => {
 			if (err) {
 				console.error('Failed to open SQLite database:', err.message);
@@ -331,6 +332,10 @@ module.exports = NodeHelper.create({
 			console.info(`published ${image.url}`)
 			res.send(image);
 		});
+
+		this.expressApp.get("/MMM-ImagesPhotos/health", (req, res) => {
+            res.send("OK");
+        });
 
 		this.expressApp.use("/MMM-ImagesPhotos/photo", express.static(self.path_images));
 	},
