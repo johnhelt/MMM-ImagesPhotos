@@ -408,7 +408,13 @@ module.exports = NodeHelper.create({
 							} catch (error) {
 								console.error("Error reading EXIF data for", relativePath, ":", error);
 								timestamp = stats.mtime.getTime();  // Fallback to file's modified time
-								resolve();  // Resolve in case of error
+								// Save EXIF data for future use
+								this.saveExifDataToDB(relativePath, { timestamp: timestamp }, (success) => {
+									if (success) {
+										console.debug("Fallback timestamp saved for " + relativePath);
+									}
+									resolve();  // Resolve when saving is done
+								});								
 							}
 						}
 	
