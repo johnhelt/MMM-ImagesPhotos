@@ -21,7 +21,7 @@ const LOG_LEVELS = {
 	ERROR: 3,
   };
   
-const currentLogLevel = LOG_LEVELS.DEBUG; // Set your desired log level
+const currentLogLevel = LOG_LEVELS.INFO; // Set your desired log level
 
 const originalConsoleInfo = console.info;
 const originalConsoleDebug = console.debug;
