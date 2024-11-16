@@ -22,7 +22,7 @@ const LOG_LEVELS = {
 	ERROR: 3,
   };
   
-const currentLogLevel = LOG_LEVELS.INFO; // Set your desired log level
+const currentLogLevel = LOG_LEVELS.DEBUG; // Set your desired log level
 
 const originalConsoleInfo = console.info;
 const originalConsoleDebug = console.debug;
@@ -43,32 +43,23 @@ console.debug = function (...args) {
 module.exports = NodeHelper.create({		
 	
 	// Override start method.
-	start: function() {
+	start: async function() {
 		var self = this;                
 		console.log("Starting node helper for: " + this.name);
 		
 		// Initialize the configuration and database
 		this.setConfig();        
-		this.initDatabase(); // Initialize the SQLite database for EXIF caching
+		await this.initDatabase(); // Initialize the SQLite database for EXIF caching
 		
 		this.image = {url: null, album: null}; // Initialize the image object
 		this.photos = []; // Initialize the photos array
 	
 		console.log(`Initial image is ${this.image.url}`);
 		
-		this.initImagesPromise = self.getImagesInit();
+		await self.getImagesInit();
 		// Setup additional routes for the module
+		this.extraRoutes(self);
 
-		this.initImagesPromise.then(() => {
-			// Only setup routes once images are ready
-			console.debug(`initImagesPromise completed. Images are now ${this.photos.length}`);
-			this.extraRoutes(self);
-		}).catch(err => {
-			console.error("Error during image initialization:", err);
-		});
-			
-		// Initialize image fetching
-		
 	},
 
 	setConfig: function() {
@@ -91,22 +82,36 @@ module.exports = NodeHelper.create({
 	},
 
 	// Initialize the SQLite database
-	initDatabase: function() {
-		
-		this.db = new sqlite3.Database(path.join(global.root_path, '/databases/exif_cache.db'), (err) => {
-			if (err) {
-				console.error('Failed to open SQLite database:', err.message);
-			} else {
+	initDatabase: async function() {
+		try {
+			// Wrap the database connection in a promise
+			this.db = new sqlite3.Database(path.join(global.root_path, '/databases/exif_cache.db'), (err) => {
+				if (err) {
+					throw new Error('Failed to open SQLite database: ' + err.message);
+				}
 				console.log('SQLite database connected');
-			}
-		});
-
-		// Create a table to store EXIF data if it doesn't exist
-		this.db.run(`
-			CREATE TABLE IF NOT EXISTS exif_data (
-				filePath TEXT PRIMARY KEY,
-				exifData TEXT
-			)`);
+			});
+	
+			// Wrap the `run` method in a promise for creating the table
+			await new Promise((resolve, reject) => {
+				this.db.run(`
+					CREATE TABLE IF NOT EXISTS exif_data (
+						filePath TEXT PRIMARY KEY,
+						exifData TEXT
+					)`, (err) => {
+					if (err) {
+						reject(new Error('Failed to create table: ' + err.message));
+					} else {
+						console.log('Table created or already exists');
+						resolve(); // Resolve once the query completes successfully
+					}
+				});
+			});
+	
+		} catch (err) {
+			console.error("Error in initDatabase:", err);
+			throw err; // Ensure the error is propagated
+		}
 	},
 
 
@@ -148,15 +153,7 @@ module.exports = NodeHelper.create({
 
 	onClientConnect: function(t_this) {
 		var self = t_this;
-		console.log("entering onClientConnect")
-
-		self.initImagesPromise.then(() => {
-			console.log("images received");
-		})
-		.catch(err => {
-			console.error("error fetching images:", err);
-		})
-		
+		console.log("entering onClientConnect")	
 
 		setInterval(function() {
 			var self = t_this;
