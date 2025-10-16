@@ -438,19 +438,34 @@ module.exports = NodeHelper.create({
 		console.debug("Calling getFilesAndDates");
 		let files = [];
 		let ignoreList = [];
-	
-		const ignoreFilePath = path.join(input_directory, ".ignore");
+
+		// input_directory will be '/opt/magic_mirror/modules/MMM-ImagesPhotos/uploads'
+		const parentDir = input_directory;
+		const albumsDir = path.join(parentDir, "albums");
+
+		const ignoreFilePath = path.join(parentDir, ".ignore");
+		console.info(`Checking for .ignore file at: ${ignoreFilePath}`);
+
 		if (fs.existsSync(ignoreFilePath)) {
-			const ignoreContent = fs.readFileSync(ignoreFilePath, "utf-8");
-			ignoreList = ignoreContent
-				.split("\n")               
-				.map(line => line.trim())   
-				.filter(line => line && !line.startsWith("#"));  
-			console.debug("Ignoring directories:", ignoreList);
+			try {
+				const ignoreContent = fs.readFileSync(ignoreFilePath, "utf-8");
+				ignoreList = ignoreContent
+					.split("\n")
+					.map(line => line.trim())
+					.filter(line => line && !line.startsWith("#"));
+				console.info(`✅ .ignore file found. Ignoring albums:`);
+				ignoreList.forEach(folder => console.info(`   - ${folder}`));
+			} catch (err) {
+				console.error(`⚠️ Error reading .ignore file: ${err.message}`);
+			}
+		} else {
+			console.info(`ℹ️ No .ignore file found in ${parentDir}. Scanning all albums.`);
 		}
-	
-		await this.ThroughDirectory(files, input_directory, ignoreList, input_directory);  // Await the result from ThroughDirectory
-		console.debug(`Done iterating over input directory. Found ${files.length} files.`);
+
+		// Now scan inside the albums folder
+		await this.ThroughDirectory(files, albumsDir, ignoreList, albumsDir);
+
+		console.debug(`Done iterating over albums directory. Found ${files.length} files.`);
 		return files;
-	}	
+}
 });
