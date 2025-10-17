@@ -334,7 +334,7 @@ module.exports = NodeHelper.create({
             res.send("OK");
         });
 
-		this.expressApp.use("/MMM-ImagesPhotos/photo", express.static(self.path_images));
+		this.expressApp.use("/MMM-ImagesPhotos/photo", express.static(path.join(self.path_images, "albums")));
 	},
 
 	
